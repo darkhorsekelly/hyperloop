@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 10px;
+        background-color: #f8f9fa;
+        color: #202124;
+      }
+      #selected-cell {
+        font-weight: bold;
+        color: #1a73e8;
+        background-color: #e8f0fe;
+        padding: 8px;
+        border-radius: 4px;
+        text-align: center;
+        margin-bottom: 12px;
+      }
+      #upload-form {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      input[type="file"] {
+        border: 1px solid #dadce0;
+        padding: 5px;
+        border-radius: 4px;
+      }
+      button {
+        background-color: #1a73e8;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+      button:disabled {
+        background-color: #dadce0;
+        cursor: not-allowed;
+      }
+      button:hover:not(:disabled) {
+        background-color: #1557b0;
+      }
+      #status {
+        margin-top: 10px;
+        text-align: center;
+        font-style: italic;
+        color: #5f6368;
+      }
+    </style>
+  </head>
+  <body>
+    <h3>Image Uploader</h3>
+    <div id="selected-cell">Click a cell to select it</div>
+    
+    <div id="upload-form">
+      <input type="file" id="file-input" accept="image/*">
+      <button id="upload-button" disabled>Upload to Selected Cell</button>
+    </div>
+
+    <div id="status"></div>
+
+    <script>
+      let selectedCellA1Notation = null;
+
+      // Update the selected cell display when the selection changes in the sheet
+      function updateSelectedCell(cellA1Notation) {
+        document.getElementById('selected-cell').textContent = cellA1Notation || 'No cell selected';
+        selectedCellA1Notation = cellA1Notation;
+        document.getElementById('upload-button').disabled = !cellA1Notation;
+      }
+
+      // Listen for selection changes from the server
+      google.script.run.withSuccessHandler(updateSelectedCell)
+        .withFailureHandler(() => updateSelectedCell('Error'))
+        .getActiveCellA1Notation();
+
+      // Set up a poller to check for selection changes periodically
+      setInterval(() => {
+        google.script.run.withSuccessHandler(updateSelectedCell)
+          .getActiveCellA1Notation();
+      }, 2000); // Check every 2 seconds
+
+      // Handle the upload button click
+      document.getElementById('upload-button').addEventListener('click', () => {
+        const file = document.getElementById('file-input').files[0];
+        if (!file || !selectedCellA1Notation) {
+          document.getElementById('status').textContent = 'Please select a cell and a file.';
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const data = e.target.result.split(',');
+          const mimeType = data[0].match(/:(.*?);/)[1];
+          const base64Data = data[1];
+
+          document.getElementById('status').textContent = 'Uploading...';
+          document.getElementById('upload-button').disabled = true;
+
+          google.script.run
+            .withSuccessHandler(() => {
+              document.getElementById('status').textContent = '✅ Upload successful!';
+              document.getElementById('file-input').value = ''; // Clear file input
+              setTimeout(() => document.getElementById('status').textContent = '', 3000);
+            })
+            .withFailureHandler((err) => {
+              document.getElementById('status').textContent = `❌ Error: ${err.message}`;
+            })
+            .uploadImage({
+              mimeType: mimeType,
+              base64Data: base64Data,
+              fileName: file.name
+            }, selectedCellA1Notation);
+        };
+        reader.readAsDataURL(file);
+      });
+    </script>
+  </body>
+</html>
+

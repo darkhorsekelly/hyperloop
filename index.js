@@ -5,6 +5,7 @@ const INPUT_SHEET_NAME = "";
 const REPORT_SHEET_NAME = "";
 const URL_COLUMN_NUMBER = 1; // Column where the image URL is pasted.
 const TARGET_CELL_COLUMN_NUMBER = 1; // Column which contains the target cell address (e.g., "A10") for the report.
+const MAX_WIDTH = ""; // Define the maximum width constraint in pixels
 
 /**
  * Creates an installable 'onEdit' trigger for the handleEdit function.
@@ -62,24 +63,14 @@ function handleEdit(e) {
     }
 
     // 3. Validate and process the URL from the edited cell.
-    const url = e.value;
-    if (!url || typeof url !== 'string' || !url.startsWith("http")) {
-      console.log(`${functionName}: The new value '${url}' in cell ${range.getA1Notation()} is not a valid URL. Aborting.`);
-      return;
-    }
-
     const activeRow = range.getRow();
-    console.log(`${functionName}: Valid URL detected in ${range.getA1Notation()}. Processing for row ${activeRow}.`);
-
-    // 4. Get the target cell address from the corresponding column in the same row.
     const targetCellAddress = sheet.getRange(activeRow, TARGET_CELL_COLUMN_NUMBER).getValue();
+
     if (!targetCellAddress) {
-      console.error(`${functionName}: ERROR! No target cell address found in cell G${activeRow}. Cannot proceed. Please check the G${INPUT_SHEET_NAME} sheet.`);
+      console.error(`${functionName}: ERROR! No target cell address found in cell ${TARGET_CELL_COLUMN_NUMBER}${activeRow}. Cannot proceed. Please check the ${INPUT_SHEET_NAME} sheet.`);
       return;
     }
-    console.log(`${functionName}: Target cell address found in G${activeRow}: '${targetCellAddress}'.`);
 
-    // 5. Get the report sheet and validate that the target range is valid.
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const reportSheet = ss.getSheetByName(REPORT_SHEET_NAME);
     if (!reportSheet) {
@@ -91,14 +82,40 @@ function handleEdit(e) {
     try {
       targetRange = reportSheet.getRange(targetCellAddress);
     } catch (rangeError) {
-      console.error(`${functionName}: ERROR! The address '${targetCellAddress}' (from cell G${activeRow}) is not a valid range in the '${REPORT_SHEET_NAME}' sheet.`);
+      console.error(`${functionName}: ERROR! The address '${targetCellAddress}' (from cell ${TARGET_CELL_COLUMN_NUMBER}${activeRow}) is not a valid range in the '${REPORT_SHEET_NAME}' sheet.`);
       console.error(`--> Underlying Error: ${rangeError.message}`);
       return;
     }
 
-    // 6. Perform the core logic: measure the image and set the row height.
-    measureAndSetRowHeight(url, reportSheet, targetRange, activeRow);
+    // 4. Determine the action based on the new and old cell values
+    const url = e.value;
+    const oldUrl = e.oldValue;
 
+    // --- SCENARIO A: A valid URL was pasted or changed ---
+    if (url && typeof url === 'string' && url.startsWith("http")) {
+      console.log(`${functionName}: Valid URL detected in ${range.getA1Notation()}. Processing for row ${activeRow}.`);
+      measureAndSetRowHeight(url, reportSheet, targetRange, activeRow);
+    }
+
+    // --- SCENARIO B: The cell was cleared ---
+    else if (!url && oldURL && typeof oldUrl === 'string' && oldUrl.startsWith("http")) {
+      console.log(`${functionName}: URL removed from ${range.getA1Notation()}. Clearing target cell and resetting row.`);
+      
+      const targetRow = targetRange.getRow();
+
+      // Clear the target cell in the report sheet.
+      targetRange.clearContent();
+
+      // Reset the row height to default.
+      reportSheet.setRowHeight(targetRow, 21);
+
+      console.log(`${functionName}: Cleared content in ${targetRange.getA1Notation()} and reset row ${targetRow} height to default.`);
+    }
+
+    // --- SCENARIO C: The cell was edited to a non-URL value ---
+    else {
+      console.log(`${functionName}: The new value in ${range.getA1Notation()} is not a valid URL. No action taken.`);
+    }
   } catch (error) {
     // This is a catch-all for any other unexpected errors in the main function.
     console.error(`${functionName}: An unexpected error occurred in the main execution block. Details: ${error.message}`);
@@ -125,53 +142,75 @@ function handleEdit(e) {
  * @param {number} sourceRow The row number from the input sheet for logging.
  */
 function measureAndSetRowHeight(url, reportSheet, targetRange, sourceRow) {
-  const functionName = "measureAndSetRowHeight";
-  let tempDoc = null; 
+    const functionName = "measureAndSetRowHeight";
+    let tempDoc = null;
 
-  try {
-    // 1. Fetch the image blob.
-    console.log(`${functionName}: Attempting to fetch image blob from URL: ${url}`);
-    const blob = UrlFetchApp.fetch(url).getBlob();
-    console.log(`${functionName}: Successfully fetched image blob.`);
+    try {
+      // 1. Fetch the image blob.
+      console.log(`${functionName}: Attempting to fetch image blob from URL: ${url}`);
+      const blob = UrlFetchApp.fetch(url).getBlob();
+      console.log(`${functionName}: Successfully fetched image blob.`);
 
-    // 2. Use a temporary Google Doc to measure the true, unscaled dimensions.
-    console.log(`${functionName}: Creating temporary Google Doc for measurement...`);
-    const docName = `temp_image_measuring_doc_${new Date().getTime()}`;
-    tempDoc = DocumentApp.create(docName);
-    const body = tempDoc.getBody();
-    const image = body.appendImage(blob);
+      // 2. Use a temporary Google Doc to measure the true, unscaled dimensions.
+      console.log(`${functionName}: Creating temporary Google Doc for measurement...`);
+      const docName = `temp_image_measuring_doc_${new Date().getTime()}`;
+      tempDoc = DocumentApp.create(docName);
+      const body = tempDoc.getBody();
+      const image = body.appendImage(blob);
 
-    const imageHeight = image.getHeight();
-    const imageWidth = image.getWidth(); 
-    console.log(`Successfully measured image dimensions: ${imageWidth}w x ${imageHeight}h.`);
+      const imageHeight = image.getHeight();
+      const imageWidth = image.getWidth();
+      console.log(`Successfully measured image dimensions: ${imageWidth}w x ${imageHeight}h.`);
 
-    // 3. Set the row height in the report sheet.
-    const targetRow = targetRange.getRow();
-    const newHeight = Math.round(imageHeight) + 5; // Add 5px padding.
-    console.log(`Setting row ${targetRow} to height ${newHeight}px.`);
-    reportSheet.setRowHeight(targetRow, newHeight);
+      // 3. Check if image is too wide and calculate final dimensions.
+      let finalHeight;
+      let finalWidth;
 
-    // 4. ✨ IMPORTANT: Write the formula using mode 4 to force the correct size.
-    const formula = `=IMAGE("${url}", 4, ${imageHeight}, ${imageWidth})`;
-    console.log(`Setting formula in cell ${targetRange.getA1Notation()}: ${formula}`);
-    targetRange.setFormula(formula);
-    
-    console.log(`${functionName}: SUCCESS! Row height and image formula set.`);
+      if (imageWidth > MAX_WIDTH) {
+        // The image is too wide; it needs to be scaled down.
+        const aspectRatio = imageHeight / imageWidth;
+        finalWidth = maxWidth;
+        finalHeight = Math.round(finalWidth * aspectRatio); // Calculate new height based on aspect ratio
 
-  } catch (error) {
-    console.error(`${functionName}: SCRIPT FAILED for source row ${sourceRow}. URL: ${url}. Error: ${error.message}`);
-    console.error(error.stack);
-    // Optional: Write an error message back to the cell.
-    targetRange.setValue(`Error measuring image: ${error.message}`);
-  } finally {
-    // 5. Clean up the temporary file.
-    if (tempDoc) {
-      try {
-        DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
-        console.log(`${functionName}: Cleaned up and deleted temporary doc file.`);
-      } catch (cleanupError) {
-        console.error(`${functionName}: FAILED to clean up temp file ID: ${tempDoc.getId()}`);
+        console.log(`Image width (${imageWidth}px) exceeds max width (${maxWidth}px). Resizing to ${finalWidth}w x ${finalHeight}h.`);
+
+      } else {
+        // The image is within the width limit, so use its original dimensions.
+        finalWidth = imageWidth;
+        finalHeight = imageHeight;
+
+        console.log(`Image width (${imageWidth}px) is within the allowed limit. Using original dimensions.`);
+      }
+
+      // 4. Set the row height in the report sheet using the final calculated height.
+      const targetRow = targetRange.getRow();
+
+      // Use finalHeight for the calculation
+      const newHeight = Math.round(finalHeight) + 5;
+      console.log(`Setting row ${targetRow} to height ${newHeight}px.`);
+      reportSheet.setRowHeight(targetRow, newHeight);
+
+      // 5. IMPORTANT: Write the formula using mode 4 with the final dimensions.
+      // Use finalHeight and finalWidth in the formula
+      const formula = `=IMAGE("${url}", 4, ${finalHeight}, ${finalWidth})`;
+      console.log(`Setting formula in cell ${targetRange.getA1Notation()}: ${formula}`);
+      targetRange.setFormula(formula);
+      console.log(`${functionName}: SUCCESS! Row height and image formula set.`);
+
+    } catch (error) {
+      console.error(`${functionName}: SCRIPT FAILED for source row ${sourceRow}. URL: ${url}. Error: ${error.message}`);
+      console.error(error.stack);
+      // Optional: Write an error message back to the cell.
+      targetRange.setValue(`Error measuring image: ${error.message}`);
+    } finally {
+      // 5. Clean up the temporary file.
+      if (tempDoc) {
+        try {
+          DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
+          console.log(`${functionName}: Cleaned up and deleted temporary doc file.`);
+        } catch (cleanupError) {
+          console.error(`${functionName}: FAILED to clean up temp file ID: ${tempDoc.getId()}`);
+        }
       }
     }
   }
-}
