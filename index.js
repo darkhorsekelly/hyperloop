@@ -98,7 +98,7 @@ function handleEdit(e) {
     }
 
     // --- SCENARIO B: The cell was cleared ---
-    else if (!url && oldURL && typeof oldUrl === 'string' && oldUrl.startsWith("http")) {
+    else if (!url && oldUrl && typeof oldUrl === 'string' && oldUrl.startsWith("http")) {
       console.log(`${functionName}: URL removed from ${range.getA1Notation()}. Clearing target cell and resetting row.`);
       
       const targetRow = targetRange.getRow();
